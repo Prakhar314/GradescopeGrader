@@ -321,67 +321,15 @@ function readPageContent() {
   }
 }
 
-// Load required libraries dynamically
-async function loadLibraries() {
-  // First check if OpenAI is already loaded
-  if (window.OpenAI) {
-    return { OpenAI: window.OpenAI };
-  }
-  
-  // Load the OpenAI SDK
-  const openAiScript = document.createElement('script');
-  openAiScript.src = 'https://cdn.jsdelivr.net/npm/openai/index.min.js';
-  document.head.appendChild(openAiScript);
-  
-  // Load Zod library
-  const zodScript = document.createElement('script');
-  zodScript.src = 'https://cdn.jsdelivr.net/npm/zod/lib/index.umd.min.js';
-  document.head.appendChild(zodScript);
-  
-  // Wait for libraries to load
-  return new Promise((resolve, reject) => {
-    openAiScript.onload = () => {
-      zodScript.onload = () => {
-        resolve({
-          OpenAI: window.OpenAI,
-          z: window.z
-        });
-      };
-      zodScript.onerror = reject;
-    };
-    openAiScript.onerror = reject;
-  });
-}
-
-// Query the OpenAI API with the rubric and submission using structured output with Zod
+// Query the OpenAI API directly with fetch
 async function queryOpenAI() {
   try {
     if (!state.apiKey || !state.submissionImageSrc || !state.rubricItems.length) {
       throw new Error("Missing required data for API query");
     }
     
-    // Load required libraries
-    const { OpenAI, z } = await loadLibraries();
-    
-    // Create OpenAI client
-    const openai = new OpenAI({
-      apiKey: state.apiKey,
-      dangerouslyAllowBrowser: true // Note: In production, you'd use a backend proxy
-    });
-    
-    // Convert image to base64 (if it's not already)
-    const imageBase64 = await fetchImageAsBase64(state.submissionImageSrc);
-    
-    // Define Zod schema for structured output
-    const RubricEvaluation = z.object({
-      applied: z.boolean().describe("Whether the rubric item should be applied based on the submission"),
-      reason: z.string().describe("A brief explanation of why this decision was made")
-    });
-    
-    const GradingResult = z.object({
-      rubricEvaluations: z.array(RubricEvaluation).describe("Evaluation for each rubric item"),
-      overallFeedback: z.string().describe("Overall feedback on the submission")
-    });
+    // Convert image to base64
+    // const imageBase64 = await fetchImageAsBase64(state.submissionImageSrc);
     
     // Prepare the user prompt
     const userPrompt = `
@@ -394,50 +342,112 @@ async function queryOpenAI() {
       Also include overall feedback on the submission.
     `;
     
-    // Prepare the request
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-2024-08-06",
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert teacher assistant that helps grade student homework submissions."
-        },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: userPrompt },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:image/jpeg;base64,${imageBase64}`
+    // Define the expected response format as a JSON schema
+    const responseSchema = {
+      type: "object",
+      properties: {
+        rubricEvaluations: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              applied: {
+                type: "boolean",
+                description: "Whether the rubric item should be applied based on the submission"
+              },
+              reason: {
+                type: "string",
+                description: "A brief explanation of why this decision was made"
               }
-            }
-          ]
+            },
+            required: ["applied", "reason"]
+            additionalProperties: false,
+          },
+          description: "Evaluation for each rubric item"
+        },
+        overallFeedback: {
+          type: "string",
+          description: "Overall feedback on the submission"
         }
-      ],
-      response_format: {
-        type: "text",  
-        // Replace with zodResponseFormat directly when using newer OpenAI SDK versions
-        schema: GradingResult.shape
       },
-      max_tokens: 4000
+      required: ["rubricEvaluations", "overallFeedback"],
+      additionalProperties: false,
+    };
+    
+    // Prepare the API request
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.apiKey}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-2024-08-06",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert teacher assistant that helps grade student homework submissions."
+          },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userPrompt },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `${state.submissionImageSrc}`
+                }
+              }
+            ]
+          }
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "grade_response",
+            schema: responseSchema,
+            strict: true
+          }
+        },
+        max_tokens: 4000
+      })
     });
     
-    // Parse the response using the Zod schema
-    const responseText = completion.choices[0].message.content;
-    
-    // Parse as JSON and validate against our schema
-    let results;
-    try {
-      const parsedResponse = JSON.parse(responseText);
-      // Validate with Zod schema
-      results = GradingResult.parse(parsedResponse);
-    } catch (error) {
-      throw new Error(`Failed to parse API response: ${error.message}`);
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`API error: ${errorData.error?.message || response.statusText}`);
     }
     
+    const data = await response.json();
+    
+    // Parse the response content
+    if (!data.choices || !data.choices[0]?.message?.content) {
+      throw new Error("Invalid API response format");
+    }
+    
+    // Parse the JSON string from the API response
+    const parsedContent = JSON.parse(data.choices[0].message.content);
+    
+    // Validate the response has the expected structure
+    if (!parsedContent.rubricEvaluations || !Array.isArray(parsedContent.rubricEvaluations) || 
+        typeof parsedContent.overallFeedback !== 'string') {
+      throw new Error("API response does not match expected format");
+    }
+    
+    // Ensure the number of evaluations matches the number of rubric items
+    if (parsedContent.rubricEvaluations.length !== state.rubricItems.length) {
+      throw new Error(`API returned ${parsedContent.rubricEvaluations.length} evaluations, but we have ${state.rubricItems.length} rubric items`);
+    }
+    
+    // Validate each evaluation
+    parsedContent.rubricEvaluations.forEach(evaluation => {
+      if (typeof evaluation.applied !== 'boolean' || typeof evaluation.reason !== 'string') {
+        throw new Error("Invalid evaluation format in API response");
+      }
+    });
+    
     // Store results
-    state.results = results;
+    state.results = parsedContent;
     
     // Transition to Display state
     transitionToState('display');
@@ -473,10 +483,14 @@ async function fetchImageAsBase64(url) {
 // Apply grades to the page based on results
 function applyGradesToPage() {
   try {
-    // reset rubric grade buttons
-    let rubricGradeAppliedButtons = document.getElementById("rubricItem--key-applied");
-    for (const rubricApplied of rubricGradeAppliedButtons) {
-      rubricApplied.click();
+    // Try to find rubric grade applied buttons
+    let rubricGradeAppliedButtons = document.getElementsByClassName("rubricItem--key-applied");
+    
+    // Clear previously applied grades if any exist
+    if (rubricGradeAppliedButtons && rubricGradeAppliedButtons.length > 0) {
+      for (let i = 0; i < rubricGradeAppliedButtons.length; i++) {
+        rubricGradeAppliedButtons[i].click();
+      }
     }
 
     // Get rubric grade buttons
