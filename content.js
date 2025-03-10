@@ -15,8 +15,8 @@ function initializeExtension() {
   container.id = 'homework-grader-extension';
   container.style.cssText = `
     position: fixed;
-    top: 20px;
-    right: 20px;
+    bottom: 20px;
+    left: 20px;
     width: 300px;
     max-height: 80vh;
     overflow-y: auto;
@@ -341,28 +341,40 @@ async function queryOpenAI() {
       Provide a brief reason for each decision.
       Also include overall feedback on the submission.
     `;
+
+    let properties = {};
+    let required_properties = [];
+
+    state.rubricItems.forEach((item, index) => {
+          const key = `rubric_${index + 1}`;
+
+          properties[key] = {
+            type: "object",
+            properties: {
+                applied: {
+                  type: "boolean",
+                  description: `Whether the rubric item should be applied based on the submission (${item.description})`
+                },
+                reason: {
+                  type: "string",
+                  description: "A brief explanation of why this decision was made"
+                },
+            },
+            required: ["applied", "reason"],
+            additionalProperties: false,
+          };
+          required_properties.push(key);
+    })
     
     // Define the expected response format as a JSON schema
     const responseSchema = {
       type: "object",
       properties: {
         rubricEvaluations: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              applied: {
-                type: "boolean",
-                description: "Whether the rubric item should be applied based on the submission"
-              },
-              reason: {
-                type: "string",
-                description: "A brief explanation of why this decision was made"
-              }
-            },
-            required: ["applied", "reason"]
-            additionalProperties: false,
-          },
+          type: "object",
+          properties: properties,
+          required: required_properties,
+          additionalProperties: false,
           description: "Evaluation for each rubric item"
         },
         overallFeedback: {
@@ -429,25 +441,21 @@ async function queryOpenAI() {
     const parsedContent = JSON.parse(data.choices[0].message.content);
     
     // Validate the response has the expected structure
-    if (!parsedContent.rubricEvaluations || !Array.isArray(parsedContent.rubricEvaluations) || 
+    if (!parsedContent.rubricEvaluations || 
         typeof parsedContent.overallFeedback !== 'string') {
       throw new Error("API response does not match expected format");
     }
     
-    // Ensure the number of evaluations matches the number of rubric items
-    if (parsedContent.rubricEvaluations.length !== state.rubricItems.length) {
-      throw new Error(`API returned ${parsedContent.rubricEvaluations.length} evaluations, but we have ${state.rubricItems.length} rubric items`);
-    }
-    
-    // Validate each evaluation
-    parsedContent.rubricEvaluations.forEach(evaluation => {
-      if (typeof evaluation.applied !== 'boolean' || typeof evaluation.reason !== 'string') {
-        throw new Error("Invalid evaluation format in API response");
-      }
-    });
-    
     // Store results
     state.results = parsedContent;
+    let resultList = [];
+    state.rubricItems.forEach((item, index) => {
+       resultList.push(
+        parsedContent.rubricEvaluations[`rubric_${index + 1}`]
+       );
+    })
+    state.results.rubricEvaluations = resultList;
+    console.log(state.results.rubricEvaluations);
     
     // Transition to Display state
     transitionToState('display');
@@ -483,15 +491,6 @@ async function fetchImageAsBase64(url) {
 // Apply grades to the page based on results
 function applyGradesToPage() {
   try {
-    // Try to find rubric grade applied buttons
-    let rubricGradeAppliedButtons = document.getElementsByClassName("rubricItem--key-applied");
-    
-    // Clear previously applied grades if any exist
-    if (rubricGradeAppliedButtons && rubricGradeAppliedButtons.length > 0) {
-      for (let i = 0; i < rubricGradeAppliedButtons.length; i++) {
-        rubricGradeAppliedButtons[i].click();
-      }
-    }
 
     // Get rubric grade buttons
     let rubricGradeButtons = document.getElementsByClassName("rubricItem--key");
@@ -503,7 +502,8 @@ function applyGradesToPage() {
     
     // Click buttons for applied rubric items
     state.results.rubricEvaluations.forEach((result, index) => {
-      if (result.applied) {
+      const button_applied = (rubricGradeButtons[index].ariaPressed === 'true');
+      if (result.applied != button_applied) {
         rubricGradeButtons[index].click();
       }
     });
@@ -527,7 +527,7 @@ function applyGradesToPage() {
 // Go to the next submission
 function goToNextSubmission() {
   try {
-    let nextButton = document.getElementsByClassName("js-nextUngraded");
+    let nextButton = document.getElementsByClassName("js-nextSubmissionButton");
     if (nextButton.length !== 1) {
       throw new Error("Multiple/no next buttons found");
     }
