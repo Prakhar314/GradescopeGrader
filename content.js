@@ -4,6 +4,7 @@ const state = {
   apiKey: null,
   rubricItems: [],
   submissionImageSrc: null,
+  extraContext: null,
   results: null,
   processingTimeout: null
 };
@@ -45,7 +46,7 @@ function renderUI() {
   content += `
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
       <h2 style="margin: 0; font-size: 18px;">Homework Grader</h2>
-      <span style="background: #eee; border-radius: 4px; padding: 3px 6px; font-size: 12px;">${state.currentState}</span>
+      <button id="add-extra-context-button" style="background: #eee; border-radius: 4px; padding: 3px 6px; font-size: 12px;">+</button>
     </div>
   `;
   
@@ -83,6 +84,13 @@ function renderStartState() {
         value="${state.apiKey || ''}" 
         style="width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;"
       />
+      <input 
+        type="text"
+        id="extra-context-input"
+        placeholder="The question is regarding..."
+        value="${state.extraContext || ''}" 
+        style="width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;"
+        />
       <button 
         id="start-button" 
         style="background-color: #4CAF50; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; width: 100%;"
@@ -198,6 +206,10 @@ function addEventListeners() {
       }
       break;
   }
+  const addContextButton = document.getElementById('add-extra-context-button');
+  if (addContextButton){
+    addContextButton.addEventListener('click', handleReset);
+  }
 }
 
 // Handler for the Start button click
@@ -211,8 +223,17 @@ function handleStartButtonClick() {
     return;
   }
   
-  // Store the API key and transition to Reading state
+  // Store the API key 
   state.apiKey = apiKey;
+  
+  const extraContextInput = document.getElementById('extra-context-input');
+  if (extraContextInput) {
+    const extraContext = extraContextInput.value.trim();
+    if (extraContext) {
+      state.extraContext = extraContext;
+    }
+  }
+
   transitionToState('reading');
 }
 
@@ -331,8 +352,16 @@ async function queryOpenAI() {
     // Convert image to base64
     // const imageBase64 = await fetchImageAsBase64(state.submissionImageSrc);
     
+    let userPrompt = "";
+    
+    if (state.extraContext != null){
+      userPrompt += `
+        Here is some context about the homework:
+        ${state.extraContext}
+      `
+    }
     // Prepare the user prompt
-    const userPrompt = `
+    userPrompt += `
       Please grade this homework submission according to the following rubric items:
       ${state.rubricItems.map((item, index) => 
         `${index + 1}. ${item.description} (${item.points} points)`).join('\n')}
@@ -395,10 +424,11 @@ async function queryOpenAI() {
       },
       body: JSON.stringify({
         model: "gpt-4o-2024-08-06",
+        temperature: 0.2,
         messages: [
           {
             role: "system",
-            content: "You are an expert teacher assistant that helps grade student homework submissions."
+            content: "You are an expert teacher assistant that helps grade student homework submissions. You tend to be lenient with grading."
           },
           {
             role: "user",

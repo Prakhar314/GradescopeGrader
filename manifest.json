@@ -13,7 +13,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.gradescope.com/*"],
+      "matches": ["*://*.gradescope.com/courses/*/questions/*/submissions/*/grade"],
       "js": ["content.js"]
     }
   ],

@@ -20,4 +20,7 @@ This project isn't ready for prime-time grading yet. Don't trust it with your jo
 ## 📌 TODO:
 - [ ] Improve prompt
 - [ ] Include question in the prompt
-- [ ] Make it work with multiple pages
+- [ ] Make it work with different grading configurations (eg. text inputs, multiple scanned pages)
+- [ ] Save extension state like: API key, prompts
+- [ ] Allow edits to extracted rubric
+- [ ] Some way to iterate on prompt construction, by giving feedback to the LLM grader
