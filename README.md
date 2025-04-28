@@ -24,3 +24,8 @@ This project isn't ready for prime-time grading yet. Don't trust it with your jo
 - [ ] Save extension state like: API key, prompts
 - [ ] Allow edits to extracted rubric
 - [ ] Some way to iterate on prompt construction, by giving feedback to the LLM grader
+
+## Screenshots
+ ![Start](screenshots/s1.png)
+ ![Reading](screenshots/s2.png)
+ ![Graded](screenshots/s3.png)
